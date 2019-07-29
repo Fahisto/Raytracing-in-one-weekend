@@ -1,4 +1,5 @@
 use ppm::*;
+use ppm::{Sphere, HitableList, Hitable};
 use std::fs::*;
 use std::io::*;
 
@@ -18,6 +19,11 @@ fn main() {
     let hor = Vec3(4.0, 0.0, 0.0);
     let ver = Vec3(0.0, 2.0, 0.0);
     let orig = Vec3::zero();
+    let hitable_list = HitableList::new_filled_list(
+        vec![
+            Sphere::new(Vec3(0.0, 0.0, -1.0), 0.5),
+            Sphere::new(Vec3(0.0, -100.5, -1.0), 100.0),
+    ]);
 
     for j in (0..ny).rev() {
         for i in 0..nx {
@@ -26,7 +32,7 @@ fn main() {
 
             let ray = Ray::new(orig, lower_left_corner + hor * u + ver * v);
 
-            let color = ppm::color(ray);
+            let color = ppm::color(ray, &hitable_list);
             //println!("{}", color);
 
             let ir: i32 = (COEFF * color.0) as i32;
