@@ -289,7 +289,20 @@ impl Camera {
 }
 
 pub trait Scattering{
-    fn scatter(ray_in: Ray, info: HitInfo, attenuation: Vec3, scattered: Ray) -> bool;
+    fn scatter(&self, ray_in: Ray, info: HitInfo, attenuation: &mut Vec3, scattered: &mut Ray) -> bool;
+}
+
+pub struct Material<T: Scattering>
+{
+    material: T,
+}
+
+impl<T: Scattering> Material<T>
+{
+    pub fn new(material: T) -> Material<T>
+    {
+        Material::<T>{material}
+    }
 }
 
 pub struct Lambertian
@@ -302,6 +315,16 @@ impl Lambertian
     pub fn new(albedo: Vec3) -> Lambertian
     {
         Lambertian{albedo}
+    }
+}
+
+impl Scattering for Lambertian{
+    fn scatter(&self, ray_in: Ray, info: HitInfo, attenuation: &mut Vec3, scattered: &mut Ray) -> bool
+    {
+        let target = info.hit_point + info.normal + random_point_in_unit_sphere();
+        *scattered = Ray::new(info.hit_point,target - info.hit_point);
+        *attenuation = self.albedo;
+        true
     }
 }
 
