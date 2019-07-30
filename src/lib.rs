@@ -56,6 +56,10 @@ impl Vec3 {
             self.2 / self.magn(),
         )
     }
+
+    pub fn reflect(v: Vec3, n: Vec3) -> Vec3 {
+        v - n * 2.0 * Vec3::dot(v, n)
+    }
 }
 
 impl fmt::Display for Vec3 {
@@ -159,22 +163,29 @@ pub trait Hitable {
 pub struct Sphere {
     center: Vec3,
     radius: f32,
+    material: Material,
 }
 
 impl Sphere {
-    pub fn new(center: Vec3, radius: f32) -> Sphere {
-        Sphere { center, radius }
+    pub fn new(material: Material, center: Vec3, radius: f32) -> Sphere {
+        Sphere {
+            material,
+            center,
+            radius,
+        }
     }
 
-    pub fn unit_from_origin() -> Sphere {
+    pub fn unit_from_origin(material: Material) -> Sphere {
         Sphere {
+            material,
             center: Vec3(0.0, 0.0, 0.0),
             radius: 1.0,
         }
     }
 
-    pub fn unit_from_point(center: Vec3) -> Sphere {
+    pub fn unit_from_point(center: Vec3, material: Material) -> Sphere {
         Sphere {
+            material,
             center,
             radius: 1.0,
         }
@@ -288,31 +299,63 @@ impl Camera {
     }
 }
 
-pub trait Scattering{
-    fn scatter(ray_in: Ray, info: HitInfo, attenuation: Vec3, scattered: Ray) -> bool;
+pub trait Scattering {
+    fn scatter(
+        &self,
+        ray_in: Ray,
+        info: HitInfo,
+        attenuation: &mut Vec3,
+        scattered: &mut Ray,
+    ) -> bool;
 }
 
-pub struct Lambertian
-{
+pub struct Material {
     albedo: Vec3,
+    metal: bool,
+    diffuse: bool,
 }
 
-impl Lambertian
-{
-    pub fn new(albedo: Vec3) -> Lambertian
-    {
-        Lambertian{albedo}
+impl Material {
+    pub fn new(albedo: Vec3, metal: bool, diffuse: bool) -> Material {
+        if metal & diffuse || (!metal && !diffuse) {
+            panic!("You cant have both material, pick one");
+        }
+
+        Material {
+            albedo,
+            metal,
+            diffuse,
+        }
     }
 }
 
+impl Scattering for Material {
+    fn scatter(
+        &self,
+        ray_in: Ray,
+        info: HitInfo,
+        attenuation: &mut Vec3,
+        scattered: &mut Ray,
+    ) -> bool {
+        if self.diffuse {
+            let target = info.hit_point + info.normal + random_point_in_unit_sphere();
+            *scattered = Ray::new(info.hit_point, target - info.hit_point);
+            *attenuation = self.albedo;
+            true
+        } else {
+            let reflected = Vec3::reflect(ray_in.get_dir().to_unit(), info.normal);
+            *scattered = Ray::new(info.hit_point, reflected);
+            *attenuation = self.albedo;
+            Vec3::dot(scattered.get_dir(), info.normal) > 0.0
+        }
+    }
+}
 
-
-pub fn color<T: Hitable>(ray: Ray, world: &T) -> Vec3 {
+pub fn color<T: Hitable>(ray: Ray, world: &T, depth: i32) -> Vec3 {
     let mut hit_info = HitInfo::new();
 
     if world.hit(&ray, 0.001, std::f32::MAX, &mut hit_info) {
-        let target = hit_info.hit_point + hit_info.normal + random_point_in_unit_sphere();
-        color(Ray::new(hit_info.hit_point, target - hit_info.hit_point), world) * 0.5
+        Vec3::zero() //if depth < 50 && world
     } else {
         let unit_dir = ray.get_dir().to_unit();
         let t = 0.5 * (unit_dir.1 + 1.0);
