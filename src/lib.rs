@@ -60,11 +60,30 @@ impl Vec3 {
     pub fn reflect(v: Vec3, n: Vec3) -> Vec3 {
         v - n * 2.0 * Vec3::dot(v, n)
     }
+
+    pub fn refract(v: Vec3, n: Vec3, ni_div_nt: f32, refracted: &mut Vec3) -> bool {
+        let unit_v = v.to_unit();
+        let dot_prod = Vec3::dot(unit_v, n);
+        let discr = 1.0 - ni_div_nt * ni_div_nt * (1.0 - dot_prod * dot_prod);
+        if discr > 0.0 {
+            *refracted = (unit_v - n * dot_prod) * ni_div_nt - n * discr.sqrt();
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl fmt::Display for Vec3 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Vec3({}, {}, {})", self.0, self.1, self.2)
+    }
+}
+
+impl Neg for Vec3 {
+    type Output = Self;
+    fn neg(self) -> Self {
+        Vec3(-self.0, -self.1, -self.2)
     }
 }
 
@@ -95,6 +114,13 @@ impl Mul<f32> for Vec3 {
 
     fn mul(self, other: f32) -> Self {
         Vec3(self.0 * other, self.1 * other, self.2 * other)
+    }
+}
+
+impl Mul for Vec3 {
+    type Output = Self;
+    fn mul(self, other: Self) -> Self {
+        Vec3(self.0 * other.0, self.1 * other.1, self.2 * other.2)
     }
 }
 
@@ -140,10 +166,12 @@ impl Clone for Vec3 {
     }
 }
 
+#[derive(Clone)]
 pub struct HitInfo {
     hit_param: f32,
     hit_point: Vec3,
     normal: Vec3,
+    material: Material,
 }
 
 impl HitInfo {
@@ -152,6 +180,7 @@ impl HitInfo {
             hit_param: 0.0,
             hit_point: Vec3::zero(),
             normal: Vec3::zero(),
+            material: Material::new(Vec3::zero(), true, false, false, 1.0, 1.5),
         }
     }
 }
@@ -173,6 +202,10 @@ impl Sphere {
             center,
             radius,
         }
+    }
+
+    pub fn get_material(&self) -> Material {
+        self.material.clone()
     }
 
     pub fn unit_from_origin(material: Material) -> Sphere {
@@ -199,7 +232,7 @@ impl Hitable for Sphere {
         let b = 2.0 * Vec3::dot(oc, ray.get_dir());
         let c = Vec3::dot(oc, oc) - self.radius * self.radius;
         let discr = b * b - 4.0 * a * c;
-
+        info.material = self.get_material();
         if discr > 0.0 {
             let mut temp = (-b - discr.sqrt()) / (2.0 * a);
             if temp > t_min && temp < t_max {
@@ -268,6 +301,7 @@ where
                 info.hit_param = temp_info.hit_param;
                 info.hit_point = temp_info.hit_point;
                 info.normal = temp_info.normal;
+                info.material = temp_info.material.clone();
             }
         }
         hit_any
@@ -309,22 +343,36 @@ pub trait Scattering {
     ) -> bool;
 }
 
+#[derive(Clone)]
 pub struct Material {
     albedo: Vec3,
     metal: bool,
     diffuse: bool,
+    dielectric: bool,
+    fuzzines: f32,
+    refraction_index: f32,
 }
 
 impl Material {
-    pub fn new(albedo: Vec3, metal: bool, diffuse: bool) -> Material {
-        if metal & diffuse || (!metal && !diffuse) {
-            panic!("You cant have both material, pick one");
+    pub fn new(
+        albedo: Vec3,
+        metal: bool,
+        diffuse: bool,
+        dielectric: bool,
+        fuzzines: f32,
+        refraction_index: f32,
+    ) -> Material {
+        if metal & diffuse & dielectric || (!metal && !diffuse && !dielectric) {
+            panic!("You cant have both materials, pick one");
         }
 
         Material {
             albedo,
             metal,
             diffuse,
+            dielectric,
+            fuzzines,
+            refraction_index,
         }
     }
 }
@@ -342,11 +390,34 @@ impl Scattering for Material {
             *scattered = Ray::new(info.hit_point, target - info.hit_point);
             *attenuation = self.albedo;
             true
-        } else {
+        } else if self.metal {
             let reflected = Vec3::reflect(ray_in.get_dir().to_unit(), info.normal);
-            *scattered = Ray::new(info.hit_point, reflected);
+            *scattered = Ray::new(
+                info.hit_point,
+                reflected + random_point_in_unit_sphere() * self.fuzzines,
+            );
             *attenuation = self.albedo;
             Vec3::dot(scattered.get_dir(), info.normal) > 0.0
+        } else {
+            let outward_normal: Vec3;
+            let reflected = Vec3::reflect(ray_in.get_dir(), info.normal);
+            let ni_div_nt: f32;
+            *attenuation = Vec3(1.0, 1.0, 0.0);
+            let mut refracted: Vec3 = Vec3::zero();
+            if Vec3::dot(ray_in.get_dir(), info.normal) > 0.0 {
+                outward_normal = -info.normal;
+                ni_div_nt = self.refraction_index;
+            } else {
+                outward_normal = info.normal;
+                ni_div_nt = 1.0 / self.refraction_index;
+            }
+            if Vec3::refract(ray_in.get_dir(), outward_normal, ni_div_nt, &mut refracted) {
+                *scattered = Ray::new(info.hit_point, refracted);
+            } else {
+                *scattered = Ray::new(info.hit_point, reflected);
+                return false;
+            }
+            true
         }
     }
 }
@@ -355,7 +426,17 @@ pub fn color<T: Hitable>(ray: Ray, world: &T, depth: i32) -> Vec3 {
     let mut hit_info = HitInfo::new();
 
     if world.hit(&ray, 0.001, std::f32::MAX, &mut hit_info) {
-        Vec3::zero() //if depth < 50 && world
+        let mut scattered: Ray = Ray::new(Vec3::zero(), Vec3::zero());
+        let mut attenuation: Vec3 = Vec3::zero();
+        if depth < 50
+            && hit_info
+                .material
+                .scatter(ray, hit_info.clone(), &mut attenuation, &mut scattered)
+        {
+            attenuation * color(scattered, world, depth)
+        } else {
+            Vec3::zero()
+        }
     } else {
         let unit_dir = ray.get_dir().to_unit();
         let t = 0.5 * (unit_dir.1 + 1.0);
