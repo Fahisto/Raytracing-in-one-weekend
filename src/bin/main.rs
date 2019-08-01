@@ -1,5 +1,5 @@
 use ppm::*;
-use ppm::{Hitable, HitableList, Sphere};
+use ppm::{Hitable, HitableList, Material, Sphere};
 use rand::*;
 use std::fs::*;
 use std::io::*;
@@ -18,8 +18,27 @@ fn main() {
         .expect("Failed to write contents");
 
     let hitable_list = HitableList::new_filled_list(vec![
-        Sphere::new(Vec3(0.0, 0.0, -1.0), 0.5),
-        Sphere::new(Vec3(0.0, -100.5, -1.0), 100.0),
+        Sphere::new(
+            Material::new(Vec3(0.8, 0.3, 0.3), false, true, false, 1.0, 1.5),
+            Vec3(0.0, 0.0, -1.0),
+            0.5,
+        ),
+        Sphere::new(
+            Material::new(Vec3(0.8, 0.8, 0.0), false, true, false, 1.0, 1.5),
+            Vec3(0.0, -100.5, -1.0),
+            100.0,
+        ),
+        Sphere::new(
+            Material::new(Vec3(0.8, 0.6, 0.2), true, false, false, 1.0, 1.5),
+            Vec3(1.0, 0.0, -1.0),
+            0.5,
+        ),
+        Sphere::new(
+            Material::new(Vec3(0.8, 0.8, 0.8), false, true, false, 1.0, 1.5),
+            Vec3(-1.0, 0.0, -1.0),
+            0.5,
+        ),
+        
     ]);
     let camera = Camera::new();
     for j in (0..ny).rev() {
@@ -32,7 +51,7 @@ fn main() {
                 let v = ((j as f32) + rand2) / ny as f32;
                 let ray = camera.get_ray(u, v);
                 let point = ray.point_at_parameter(2.0);
-                color += ppm::color(ray, &hitable_list);
+                color += ppm::color(ray, &hitable_list, 0);
                 //println!("{}", color);
             }
             color /= ns as f32;
